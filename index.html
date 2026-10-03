@@ -583,6 +583,44 @@
             modal.classList.remove('flex');
         };
 
+        // Read-only detail of the sets saved in a history entry
+        function renderHistorySets(exType, sets) {
+            if (sets.length === 0) return '';
+            const show = (v) => (v === '' || v === null || v === undefined) ? '–' : escapeHtml(v);
+
+            if (exType === 'gym') {
+                const rows = sets.map((s, idx) => `
+                    <div class="grid grid-cols-4 text-center py-1.5 ${idx > 0 ? 'border-t border-gray-100' : ''}">
+                        <span class="font-black italic text-gray-300">${idx + 1}</span>
+                        <span class="font-black text-gray-900">${show(s.reps)}</span>
+                        <span class="font-black text-gray-900">${show(s.weight)}</span>
+                        <span class="font-black text-ghisa-accent">${show(s.fatigue)}</span>
+                    </div>
+                `).join('');
+                return `
+                    <div class="mt-3 bg-white rounded-lg border border-gray-100 px-2 py-1 text-sm">
+                        <div class="grid grid-cols-4 text-center text-[9px] font-black text-gray-400 uppercase tracking-widest py-1">
+                            <span>Set</span><span>Reps</span><span>Kg</span><span class="text-ghisa-accent">RPE</span>
+                        </div>
+                        ${rows}
+                    </div>
+                `;
+            }
+
+            const blocks = sets.map((s, idx) => `
+                <div class="py-2 ${idx > 0 ? 'border-t border-gray-100' : ''}">
+                    <span class="text-[10px] font-black italic text-gray-400">BLOCCO ${idx + 1}</span>
+                    <div class="grid grid-cols-2 gap-x-3 gap-y-1 mt-1 text-xs">
+                        <span><span class="text-gray-400 font-bold">Metri:</span> <span class="font-black text-gray-900">${show(s.distance)}</span></span>
+                        <span><span class="text-gray-400 font-bold">Ripetute:</span> <span class="font-black text-gray-900">${show(s.count)}</span></span>
+                        <span><span class="text-gray-400 font-bold">Tempo:</span> <span class="font-black text-gray-900">${show(s.time)}</span></span>
+                        <span><span class="text-gray-400 font-bold">Recupero:</span> <span class="font-black text-gray-900">${show(s.rest)}</span></span>
+                    </div>
+                </div>
+            `).join('');
+            return `<div class="mt-3 bg-white rounded-lg border border-gray-100 px-3 py-1">${blocks}</div>`;
+        }
+
         window.loadHistoryDate = () => {
             const dateStr = document.getElementById('history-date-picker').value;
             const container = document.getElementById('history-results');
@@ -615,20 +653,24 @@
                 if(exType === 'swim') { typeColorClass = 'border-l-cyan-400'; typeIcon = '<i class="fa-solid fa-person-swimming"></i>'; }
 
                 const card = document.createElement('div');
-                card.className = `border-l-4 ${typeColorClass} bg-gray-50 rounded-xl p-3 shadow-sm border border-gray-100 flex items-center gap-4`;
+                card.className = `border-l-4 ${typeColorClass} bg-gray-50 rounded-xl p-3 shadow-sm border border-gray-100`;
 
-                const setsCount = ex.sets ? ex.sets.length : 0;
-                let subText = `${setsCount} ${exType === 'gym' ? 'SERIE' : 'RIPETUTE'}`;
+                const sets = ex.sets || [];
+                let subText = `${sets.length} ${exType === 'gym' ? 'SERIE' : 'RIPETUTE'}`;
 
                 card.innerHTML = `
-                    <div class="w-10 h-10 rounded-lg bg-white flex items-center justify-center shrink-0 border border-gray-200 text-gray-400 text-sm">${typeIcon}</div>
-                    <div class="flex-grow overflow-hidden py-1">
-                        <h4 class="font-black italic text-sm uppercase text-gray-700 truncate">${escapeHtml(ex.name)}</h4>
-                        <p class="text-[10px] mt-1 font-bold uppercase tracking-wider text-gray-400">${subText} - ${escapeHtml(ex.dayOfWeek)}</p>
+                    <div class="flex items-center gap-4">
+                        <div class="w-10 h-10 rounded-lg bg-white flex items-center justify-center shrink-0 border border-gray-200 text-gray-400 text-sm">${typeIcon}</div>
+                        <div class="flex-grow overflow-hidden py-1">
+                            <h4 class="font-black italic text-sm uppercase text-gray-700 truncate">${escapeHtml(ex.name)}</h4>
+                            <p class="text-[10px] mt-1 font-bold uppercase tracking-wider text-gray-400">${subText} - ${escapeHtml(ex.dayOfWeek)}</p>
+                        </div>
+                        <div class="shrink-0 text-ghisa-neonGreen">
+                            <i class="fa-solid fa-check-circle text-xl"></i>
+                        </div>
                     </div>
-                    <div class="shrink-0 text-ghisa-neonGreen">
-                        <i class="fa-solid fa-check-circle text-xl"></i>
-                    </div>
+                    ${renderHistorySets(exType, sets)}
+                    ${ex.notes && ex.notes.trim() !== '' ? `<p class="mt-3 text-xs text-gray-600 bg-white rounded-lg border border-gray-100 p-2 whitespace-pre-line"><i class="fa-solid fa-pen text-ghisa-accent mr-1"></i>${escapeHtml(ex.notes)}</p>` : ''}
                 `;
                 container.appendChild(card);
             });
