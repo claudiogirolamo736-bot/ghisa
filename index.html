@@ -1182,6 +1182,7 @@
                 updateTimerUI(timerTargetSeconds, timerTargetSeconds);
             } else {
                 timerEndTime += change * 1000;
+                armAlarm();
                 tickTimer();
             }
         };
@@ -1225,7 +1226,7 @@
         function tickTimer() {
             timerRemaining = Math.ceil((timerEndTime - Date.now()) / 1000);
             if(timerRemaining <= 0) {
-                stopTimer();
+                stopTimer(true);
                 triggerAlarm();
             } else {
                 updateTimerUI(timerRemaining, timerTargetSeconds);
@@ -1238,46 +1239,121 @@
             if(timerInterval) clearInterval(timerInterval);
 
             timerEndTime = Date.now() + timerTargetSeconds * 1000;
+            armAlarm();
+            requestWakeLock();
             timerInterval = setInterval(tickTimer, 250);
             tickTimer();
         };
 
         document.addEventListener('visibilitychange', () => {
-            if (!document.hidden && timerInterval) tickTimer();
+            if (document.hidden || !timerInterval) return;
+            // Coming back from standby: wake lock was dropped and audio may be suspended
+            requestWakeLock();
+            if (audioCtx && audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+            tickTimer();
         });
 
-        window.stopTimer = () => {
+        // keepScheduledSound: the timer ended on its own, let the pre-scheduled beeps ring
+        window.stopTimer = (keepScheduledSound = false) => {
             if(timerInterval) clearInterval(timerInterval);
             timerInterval = null;
             timerRemaining = 0;
+            if (!keepScheduledSound) cancelScheduledAlarm();
+            releaseWakeLock();
             updateTimerUI(timerTargetSeconds, timerTargetSeconds);
             appBody.classList.remove('pulse-alarm');
         };
 
-        // AUDIO ALARM //
-        function playBeep() {
-            if (!audioCtx) return;
+        // --- ALARM WITH SCREEN OFF --- //
+        // 1) Wake lock keeps the screen on during recovery, so the phone does not go to standby.
+        // 2) Beeps are scheduled in advance on the audio clock, with a near-silent keep-alive tone,
+        //    so they can still ring if the screen gets locked (Android yes, iPhone blocks it).
+        let wakeLock = null;
+        let scheduledBeeps = [];
+        let keepAliveOsc = null;
+        let alarmAudioTime = 0;
+
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator && !wakeLock) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    wakeLock.addEventListener('release', () => { wakeLock = null; });
+                }
+            } catch (err) {
+                wakeLock = null;
+            }
+        }
+
+        function releaseWakeLock() {
+            if (wakeLock) {
+                wakeLock.release().catch(() => {});
+                wakeLock = null;
+            }
+        }
+
+        function createBeep(startAt) {
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
 
             osc.type = 'square';
-            osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+            osc.frequency.setValueAtTime(600, startAt);
 
-            gain.gain.setValueAtTime(0, audioCtx.currentTime);
-            gain.gain.linearRampToValueAtTime(0.5, audioCtx.currentTime + 0.05);
-            gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.4);
+            gain.gain.setValueAtTime(0, startAt);
+            gain.gain.linearRampToValueAtTime(0.5, startAt + 0.05);
+            gain.gain.linearRampToValueAtTime(0, startAt + 0.4);
 
             osc.connect(gain);
             gain.connect(audioCtx.destination);
 
-            osc.start(audioCtx.currentTime);
-            osc.stop(audioCtx.currentTime + 0.5);
+            osc.start(startAt);
+            osc.stop(startAt + 0.5);
+            return osc;
+        }
+
+        function cancelScheduledAlarm() {
+            scheduledBeeps.forEach(osc => { try { osc.stop(); } catch (e) {} });
+            scheduledBeeps = [];
+            if (keepAliveOsc) {
+                try { keepAliveOsc.stop(); } catch (e) {}
+                keepAliveOsc = null;
+            }
+            alarmAudioTime = 0;
+        }
+
+        function armAlarm() {
+            cancelScheduledAlarm();
+            if (!audioCtx) return;
+
+            const secondsLeft = Math.max(0, (timerEndTime - Date.now()) / 1000);
+            alarmAudioTime = audioCtx.currentTime + secondsLeft;
+            scheduledBeeps = [0, 0.5, 1].map(offset => createBeep(alarmAudioTime + offset));
+
+            // Inaudible tone: the system sees the app as playing audio and keeps it running
+            keepAliveOsc = audioCtx.createOscillator();
+            const keepAliveGain = audioCtx.createGain();
+            keepAliveGain.gain.value = 0.001;
+            keepAliveOsc.connect(keepAliveGain);
+            keepAliveGain.connect(audioCtx.destination);
+            keepAliveOsc.start();
+            keepAliveOsc.stop(alarmAudioTime + 1.5);
+        }
+
+        function playBeep() {
+            if (!audioCtx) return;
+            createBeep(audioCtx.currentTime);
         }
 
         function triggerAlarm() {
-            playBeep();
-            setTimeout(playBeep, 500);
-            setTimeout(playBeep, 1000);
+            // If the scheduled beeps already rang on time, don't ring twice;
+            // if audio was frozen in standby, drop them and ring now
+            const alreadyRang = audioCtx && alarmAudioTime > 0 && audioCtx.state === 'running'
+                && audioCtx.currentTime >= alarmAudioTime - 0.3;
+            if (!alreadyRang) {
+                cancelScheduledAlarm();
+                playBeep();
+                setTimeout(playBeep, 500);
+                setTimeout(playBeep, 1000);
+            }
 
             appBody.classList.add('pulse-alarm');
 
